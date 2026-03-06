@@ -19,7 +19,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { AuthModal } from '@/components/auth/AuthModal';
 
-const navLinks = [{ label: 'Home', to: ROUTES.HOME }];
+const navLinks = [
+  { label: 'Home', to: ROUTES.HOME },
+  { label: 'Hộ gia đình', to: ROUTES.HOUSEHOLDS },
+];
 
 function UserAvatar({
   avatarUrl,

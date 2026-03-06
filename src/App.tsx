@@ -3,6 +3,7 @@ import axios from 'axios';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppRouter } from '@/router';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAuthStore } from '@/store/useAuthStore';
 import { env } from '@/config/env';
 import { PageLoader } from '@/components/common/PageLoader';
@@ -83,7 +84,9 @@ function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <AppRouter />
+        <TooltipProvider>
+          <AppRouter />
+        </TooltipProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );

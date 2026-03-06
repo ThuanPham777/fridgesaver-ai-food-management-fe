@@ -17,4 +17,13 @@ export const ENDPOINTS = {
     RESET_PASSWORD: '/auth/reset-password',
     GOOGLE: '/auth/google',
   },
+
+  HOUSEHOLDS: {
+    BASE: '/households',
+    INVITES: (id: string) => `/households/${id}/invites`,
+    JOIN_TOKEN: (token: string) => `/households/join/${token}`,
+    DETAIL: (id: string) => `/households/${id}`,
+    MEMBER: (id: string, userId: string) =>
+      `/households/${id}/members/${userId}`,
+  },
 } as const;

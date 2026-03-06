@@ -1,6 +1,9 @@
 export const ROUTES = {
   // Client
   HOME: '/',
+  HOUSEHOLDS: '/households',
+  HOUSEHOLD_DETAIL: '/households/:id',
+  HOUSEHOLD_JOIN: '/households/join/:token',
   // Admin
   ADMIN: '/admin',
   ADMIN_DASHBOARD: '/admin/dashboard',
@@ -9,8 +12,8 @@ export const ROUTES = {
   FORGOT_PASSWORD: '/forgot-password',
   RESET_PASSWORD: '/reset-password',
   OAUTH_CALLBACK: '/auth/oauth/callback',
-  // Legacy alias kept for AuthGuard redirect
-  LOGIN: '/admin/login',
+  // Client auth uses a modal — redirect unauthenticated users to home
+  LOGIN: '/',
   FORBIDDEN: '/403',
   NOT_FOUND: '/404',
 } as const;
@@ -35,6 +38,8 @@ export const STORAGE_KEYS = {
 export const QUERY_KEYS = {
   USER: 'user',
   AUTH: 'auth',
+  HOUSEHOLDS: 'households',
+  HOUSEHOLD: 'household',
 } as const;
 
 export const PAGINATION_DEFAULTS = {
