@@ -4,8 +4,13 @@ export const ROUTES = {
   // Admin
   ADMIN: '/admin',
   ADMIN_DASHBOARD: '/admin/dashboard',
-  // Auth (shared)
-  LOGIN: '/login',
+  ADMIN_LOGIN: '/admin/login',
+  // Client auth (standalone pages only — modal handles login/register)
+  FORGOT_PASSWORD: '/forgot-password',
+  RESET_PASSWORD: '/reset-password',
+  OAUTH_CALLBACK: '/auth/oauth/callback',
+  // Legacy alias kept for AuthGuard redirect
+  LOGIN: '/admin/login',
   FORBIDDEN: '/403',
   NOT_FOUND: '/404',
 } as const;
