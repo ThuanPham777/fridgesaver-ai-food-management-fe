@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -13,9 +12,10 @@ import {
   Check,
 } from 'lucide-react';
 
-import { householdApi } from '@/api/household.api';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useHouseholdStore } from '@/store/useHouseholdStore';
+import { useHouseholdList, useCreateHousehold } from '@/hooks/useHouseholds';
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -43,9 +43,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ROUTES } from '@/config/constants';
 import type { Household } from '@/types/household.types';
-import type { AxiosError } from 'axios';
-
-const QUERY_KEY = 'households';
 
 // Gradient palette for household cards
 const CARD_GRADIENTS = [
@@ -68,64 +65,15 @@ const ICON_COLORS = [
 
 export default function HouseholdsPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const { setCurrentHousehold } = useHouseholdStore();
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [error, setError] = useState('');
   const [createdHousehold, setCreatedHousehold] = useState<Household | null>(
     null,
   );
-  const [inviteCopied, setInviteCopied] = useState(false);
 
-  const { data: households = [], isLoading } = useQuery({
-    queryKey: [QUERY_KEY],
-    queryFn: async () => {
-      const res = await householdApi.getMyHouseholds();
-      return res.data.data;
-    },
-  });
-
-  // ── Create ──
-  const createMutation = useMutation({
-    mutationFn: (name: string) => householdApi.create(name),
-    onSuccess: async ({ data }) => {
-      const household = data.data;
-      queryClient.setQueryData<Household[]>([QUERY_KEY], (old = []) => [
-        ...old,
-        household,
-      ]);
-      setNewName('');
-      setDialogOpen(false);
-      setError('');
-
-      // Chain: create invite link for the new household
-      try {
-        const inviteRes = await householdApi.createInvite(household.id);
-        const updated = inviteRes.data.data;
-        queryClient.setQueryData<Household[]>([QUERY_KEY], (old = []) =>
-          old.map((h) => (h.id === updated.id ? updated : h)),
-        );
-        setCreatedHousehold(updated);
-      } catch {
-        // Invite creation failed — still show household without invite
-        setCreatedHousehold(household);
-      }
-    },
-    onError: (err: AxiosError<{ message: string }>) => {
-      setError(err.response?.data?.message ?? 'Không thể tạo hộ gia đình');
-    },
-  });
-
-  const handleCopyInviteLink = async () => {
-    if (!createdHousehold?.activeInvite) return;
-    const link = `${window.location.origin}/households/join/${createdHousehold.activeInvite.token}`;
-    await navigator.clipboard.writeText(link);
-    setInviteCopied(true);
-    setTimeout(() => setInviteCopied(false), 2000);
-  };
+  const { data: households = [], isLoading } = useHouseholdList();
 
   const handleViewDetail = (household: Household) => {
     setCurrentHousehold(household);
@@ -134,8 +82,6 @@ export default function HouseholdsPage() {
 
   const openCreateDialog = () => {
     setDialogOpen(true);
-    setError('');
-    setNewName('');
   };
 
   return (
@@ -213,133 +159,190 @@ export default function HouseholdsPage() {
         </div>
       )}
 
-      {/* ── Create dialog ── */}
-      <Dialog
+      {/* ── Dialogs ── */}
+      <CreateHouseholdDialog
         open={dialogOpen}
-        onOpenChange={(open) => !open && setDialogOpen(false)}
-      >
-        <DialogContent className='sm:max-w-md'>
-          <DialogHeader>
-            <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10'>
-              <Sparkles className='size-6 text-primary' />
-            </div>
-            <DialogTitle className='text-center'>
-              Tạo hộ gia đình mới
-            </DialogTitle>
-            <DialogDescription className='text-center'>
-              Đặt tên cho hộ gia đình. Sau khi tạo, bạn có thể tạo link mời để
-              mời thành viên.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (newName.trim()) createMutation.mutate(newName.trim());
-            }}
-          >
-            <div className='space-y-4 py-2'>
-              <div className='space-y-2'>
-                <label className='text-sm font-medium'>Tên hộ gia đình</label>
-                <Input
-                  placeholder='VD: Gia đình Nguyễn Văn A'
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  maxLength={100}
-                  autoFocus
-                />
-              </div>
-              {error && (
-                <p className='rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive'>
-                  {error}
-                </p>
-              )}
-            </div>
-            <DialogFooter className='mt-2'>
-              <Button
-                type='button'
-                variant='ghost'
-                onClick={() => setDialogOpen(false)}
-              >
-                Hủy
-              </Button>
-              <Button
-                type='submit'
-                disabled={!newName.trim() || createMutation.isPending}
-              >
-                {createMutation.isPending && (
-                  <LoadingSpinner
-                    size='sm'
-                    className='mr-1'
-                  />
-                )}
-                Tạo hộ gia đình
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setDialogOpen}
+        onCreated={setCreatedHousehold}
+      />
 
-      {/* ── Invite link dialog (shown after create) ── */}
-      <Dialog
-        open={!!createdHousehold}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCreatedHousehold(null);
-            setInviteCopied(false);
-          }
+      <InviteLinkDialog
+        household={createdHousehold}
+        onClose={() => setCreatedHousehold(null)}
+        onView={(h) => {
+          handleViewDetail(h);
+          setCreatedHousehold(null);
         }}
-      >
-        <DialogContent className='sm:max-w-md'>
-          <DialogHeader>
-            <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30'>
-              <Check className='size-6 text-emerald-600 dark:text-emerald-400' />
+      />
+    </div>
+  );
+}
+
+// ─── Create household dialog ────────────────────────────────────────────────
+
+function CreateHouseholdDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (household: Household) => void;
+}) {
+  const [newName, setNewName] = useState('');
+  const [error, setError] = useState('');
+
+  const createMutation = useCreateHousehold({
+    onSuccess: (household) => {
+      setNewName('');
+      onOpenChange(false);
+      setError('');
+      onCreated(household);
+    },
+    onError: (message) => setError(message),
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          onOpenChange(false);
+          setError('');
+          setNewName('');
+        }
+      }}
+    >
+      <DialogContent className='sm:max-w-md'>
+        <DialogHeader>
+          <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10'>
+            <Sparkles className='size-6 text-primary' />
+          </div>
+          <DialogTitle className='text-center'>Tạo hộ gia đình mới</DialogTitle>
+          <DialogDescription className='text-center'>
+            Đặt tên cho hộ gia đình. Sau khi tạo, bạn có thể tạo link mời để mời
+            thành viên.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (newName.trim()) createMutation.mutate(newName.trim());
+          }}
+        >
+          <div className='space-y-4 py-2'>
+            <div className='space-y-2'>
+              <label className='text-sm font-medium'>Tên hộ gia đình</label>
+              <Input
+                placeholder='VD: Gia đình Nguyễn Văn A'
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                maxLength={100}
+                autoFocus
+              />
             </div>
-            <DialogTitle className='text-center'>Tạo thành công!</DialogTitle>
-            <DialogDescription className='text-center'>
-              Hộ gia đình <strong>{createdHousehold?.name}</strong> đã được tạo.
-              Chia sẻ link bên dưới để mời thành viên.
-            </DialogDescription>
-          </DialogHeader>
-          {createdHousehold?.activeInvite && (
-            <div className='space-y-3 py-2'>
-              <div className='w-full break-all rounded-lg border bg-muted/30 px-3 py-3 text-sm font-mono select-all'>
-                {`${window.location.origin}/households/join/${createdHousehold.activeInvite.token}`}
-              </div>
-              <Button
-                variant={inviteCopied ? 'default' : 'outline'}
-                className='w-full'
-                onClick={handleCopyInviteLink}
-              >
-                {inviteCopied ? (
-                  <>
-                    <Check className='size-4' />
-                    Đã sao chép!
-                  </>
-                ) : (
-                  <>
-                    <Copy className='size-4' />
-                    Sao chép link mời
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
-          <DialogFooter>
+            {error && (
+              <p className='rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive'>
+                {error}
+              </p>
+            )}
+          </div>
+          <DialogFooter className='mt-2'>
             <Button
-              className='w-full'
-              onClick={() => {
-                if (createdHousehold) {
-                  handleViewDetail(createdHousehold);
-                }
-                setCreatedHousehold(null);
-              }}
+              type='button'
+              variant='ghost'
+              onClick={() => onOpenChange(false)}
             >
-              Xem hộ gia đình
+              Hủy
+            </Button>
+            <Button
+              type='submit'
+              disabled={!newName.trim() || createMutation.isPending}
+            >
+              {createMutation.isPending && (
+                <LoadingSpinner
+                  size='sm'
+                  className='mr-1'
+                />
+              )}
+              Tạo hộ gia đình
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Invite link dialog (shown after create) ────────────────────────────────
+
+function InviteLinkDialog({
+  household,
+  onClose,
+  onView,
+}: {
+  household: Household | null;
+  onClose: () => void;
+  onView: (household: Household) => void;
+}) {
+  const { copied, copy } = useCopyToClipboard();
+
+  const inviteLink = household?.activeInvite
+    ? `${window.location.origin}/households/join/${household.activeInvite.token}`
+    : '';
+
+  return (
+    <Dialog
+      open={!!household}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className='sm:max-w-md'>
+        <DialogHeader>
+          <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30'>
+            <Check className='size-6 text-emerald-600 dark:text-emerald-400' />
+          </div>
+          <DialogTitle className='text-center'>Tạo thành công!</DialogTitle>
+          <DialogDescription className='text-center'>
+            Hộ gia đình <strong>{household?.name}</strong> đã được tạo. Chia sẻ
+            link bên dưới để mời thành viên.
+          </DialogDescription>
+        </DialogHeader>
+        {inviteLink && (
+          <div className='space-y-3 py-2'>
+            <div className='w-full break-all rounded-lg border bg-muted/30 px-3 py-3 text-sm font-mono select-all'>
+              {inviteLink}
+            </div>
+            <Button
+              variant={copied ? 'default' : 'outline'}
+              className='w-full'
+              onClick={() => copy(inviteLink)}
+            >
+              {copied ? (
+                <>
+                  <Check className='size-4' />
+                  Đã sao chép!
+                </>
+              ) : (
+                <>
+                  <Copy className='size-4' />
+                  Sao chép link mời
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            className='w-full'
+            onClick={() => household && onView(household)}
+          >
+            Xem hộ gia đình
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

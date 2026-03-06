@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Copy,
@@ -18,9 +17,9 @@ import {
   Link2,
 } from 'lucide-react';
 
-import { householdApi } from '@/api/household.api';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useHouseholdStore } from '@/store/useHouseholdStore';
+import { useHouseholdDetail } from '@/hooks/useHouseholdDetail';
+import { useCopyToClipboard } from '@/hooks/useCopyToClipboard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -49,15 +48,13 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ROUTES } from '@/config/constants';
-import type { Household } from '@/types/household.types';
+import type { Household, HouseholdMember } from '@/types/household.types';
 
 export default function HouseholdDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { setCurrentHousehold } = useHouseholdStore();
 
   const [joinBanner, setJoinBanner] = useState<string | null>(null);
 
@@ -82,7 +79,6 @@ export default function HouseholdDetailPage() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [kickTarget, setKickTarget] = useState<{
@@ -90,100 +86,19 @@ export default function HouseholdDetailPage() {
     name: string;
   } | null>(null);
 
-  // ── Fetch detail ──
   const {
-    data: household,
+    household,
     isLoading,
     isError,
-  } = useQuery({
-    queryKey: ['household', id],
-    queryFn: async () => {
-      const res = await householdApi.getDetail(id!);
-      return res.data.data;
-    },
-    enabled: !!id,
-  });
+    updateMutation,
+    removeMemberMutation,
+    deleteMutation,
+    createInviteMutation,
+  } = useHouseholdDetail(id);
 
   const isOwner = household?.ownerId === user?.id;
   const currentMember = household?.members.find((m) => m.userId === user?.id);
   const isAdmin = currentMember?.role === 'admin';
-
-  // Derive invite link from household data (persisted, survives reload)
-  const inviteLink = household?.activeInvite
-    ? `${window.location.origin}/households/join/${household.activeInvite.token}`
-    : '';
-
-  // helper to sync both caches
-  const syncHousehold = (updated: Household) => {
-    queryClient.setQueryData(['household', id], updated);
-    queryClient.setQueryData<Household[]>(['households'], (old = []) =>
-      old.map((h) => (h.id === id ? updated : h)),
-    );
-  };
-
-  // ── Update name ──
-  const updateMutation = useMutation({
-    mutationFn: (name: string) => householdApi.update(id!, name),
-    onSuccess: ({ data }) => {
-      const updated = data.data;
-      syncHousehold(updated);
-      setCurrentHousehold(updated);
-      setIsEditing(false);
-      setError('');
-    },
-    onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Không thể cập nhật');
-    },
-  });
-
-  // ── Remove member ──
-  const removeMemberMutation = useMutation({
-    mutationFn: (targetUserId: string) =>
-      householdApi.removeMember(id!, targetUserId),
-    onSuccess: ({ data }) => {
-      syncHousehold(data.data);
-      setKickTarget(null);
-    },
-    onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Không thể xóa thành viên');
-      setKickTarget(null);
-    },
-  });
-
-  // ── Delete household ──
-  const deleteMutation = useMutation({
-    mutationFn: () => householdApi.remove(id!),
-    onSuccess: () => {
-      queryClient.setQueryData<Household[]>(['households'], (old = []) =>
-        old.filter((h) => h.id !== id),
-      );
-      setCurrentHousehold(null);
-      navigate(ROUTES.HOUSEHOLDS, { replace: true });
-    },
-    onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Không thể xóa hộ gia đình');
-      setDeleteDialogOpen(false);
-    },
-  });
-
-  // ── Create invite link (admin only) ──
-  const createInviteMutation = useMutation({
-    mutationFn: () => householdApi.createInvite(id!),
-    onSuccess: ({ data }) => {
-      syncHousehold(data.data);
-      setError('');
-    },
-    onError: (err: any) => {
-      setError(err.response?.data?.message ?? 'Không thể tạo link mời');
-    },
-  });
-
-  const handleCopyLink = async () => {
-    if (!inviteLink) return;
-    await navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const handleStartEdit = () => {
     if (!household) return;
@@ -276,7 +191,19 @@ export default function HouseholdDetailPage() {
                 className='flex items-center gap-2'
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (editName.trim()) updateMutation.mutate(editName.trim());
+                  if (editName.trim()) {
+                    updateMutation.mutate(editName.trim(), {
+                      onSuccess: () => {
+                        setIsEditing(false);
+                        setError('');
+                      },
+                      onError: (err: any) => {
+                        setError(
+                          err.response?.data?.message ?? 'Không thể cập nhật',
+                        );
+                      },
+                    });
+                  }
                 }}
               >
                 <Input
@@ -388,313 +315,445 @@ export default function HouseholdDetailPage() {
       {/* ── Body ── */}
       <div className='grid gap-6 lg:grid-cols-3'>
         {/* ── Members section ── */}
-        <Card className='lg:col-span-2'>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <Users className='size-4' />
-              Thành viên
-            </CardTitle>
-            <CardDescription>
-              {household.members.length} người trong hộ gia đình
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className='divide-y'>
-              {household.members.map((member) => {
-                const isMemberOwner = member.userId === household.ownerId;
-                const isMemberAdmin = member.role === 'admin';
-                const canKick =
-                  isAdmin && member.userId !== user?.id && !isMemberOwner;
+        <MemberList
+          members={household.members}
+          ownerId={household.ownerId}
+          currentUserId={user?.id ?? ''}
+          isAdmin={!!isAdmin}
+          removePending={removeMemberMutation.isPending}
+          onKick={(userId, name) => setKickTarget({ userId, name })}
+        />
 
-                return (
-                  <div
-                    key={member.id}
-                    className='flex items-center justify-between py-3 first:pt-0 last:pb-0'
-                  >
-                    <div className='flex items-center gap-3'>
-                      <Avatar className='size-10'>
-                        <AvatarImage
-                          src={member.user.avatarUrl ?? undefined}
-                          alt={member.user.fullName}
-                        />
-                        <AvatarFallback className='text-sm font-medium'>
-                          {member.user.fullName.charAt(0).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className='min-w-0'>
-                        <p className='flex items-center gap-1.5 text-sm font-medium'>
-                          <span className='truncate'>
-                            {member.user.fullName}
-                          </span>
-                          {member.userId === user?.id && (
-                            <span className='text-muted-foreground text-xs font-normal'>
-                              (bạn)
-                            </span>
-                          )}
-                        </p>
-                        <p className='text-muted-foreground truncate text-xs'>
-                          {member.user.email}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className='flex shrink-0 items-center gap-2'>
-                      {isMemberOwner && (
-                        <Badge className='gap-1 border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-400'>
-                          <Crown className='size-3' />
-                          Owner
-                        </Badge>
-                      )}
-                      {isMemberAdmin && !isMemberOwner && (
-                        <Badge
-                          variant='secondary'
-                          className='gap-1'
-                        >
-                          <Shield className='size-3' />
-                          Admin
-                        </Badge>
-                      )}
-                      {canKick && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant='ghost'
-                              size='sm'
-                              className='size-8 p-0 text-muted-foreground hover:text-destructive'
-                              onClick={() =>
-                                setKickTarget({
-                                  userId: member.userId,
-                                  name: member.user.fullName,
-                                })
-                              }
-                              disabled={removeMemberMutation.isPending}
-                            >
-                              <UserMinus className='size-4' />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            Xóa {member.user.fullName}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ── Invite link sidebar ── */}
+        {/* ── Sidebar ── */}
         <div className='space-y-6'>
-          <Card className='overflow-hidden'>
-            <CardHeader className='bg-linear-to-br from-primary/5 to-transparent'>
-              <CardTitle className='flex items-center gap-2 text-base'>
-                <Link2 className='size-4 text-primary' />
-                Link mời thành viên
-              </CardTitle>
-              <CardDescription>
-                Chia sẻ link này để mời người thân tham gia
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='pt-4'>
-              <div className='flex flex-col gap-4'>
-                {inviteLink ? (
-                  <>
-                    <div className='w-full break-all rounded-lg border bg-muted/30 px-3 py-3 text-sm font-mono select-all'>
-                      {inviteLink}
-                    </div>
-                    <div className='flex gap-2'>
-                      <Button
-                        variant={copied ? 'default' : 'outline'}
-                        className='flex-1'
-                        onClick={handleCopyLink}
-                      >
-                        {copied ? (
-                          <>
-                            <Check className='size-4' />
-                            Đã chép!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className='size-4' />
-                            Sao chép link
-                          </>
-                        )}
-                      </Button>
-                      {isAdmin && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant='outline'
-                              onClick={() => createInviteMutation.mutate()}
-                              disabled={createInviteMutation.isPending}
-                            >
-                              {createInviteMutation.isPending ? (
-                                <LoadingSpinner size='sm' />
-                              ) : (
-                                <Link2 className='size-4' />
-                              )}
-                              Tạo lại
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            Tạo link mới (link cũ sẽ hết hạn)
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <p className='text-muted-foreground text-xs text-center'>
-                      Link có hiệu lực đến{' '}
-                      {new Date(
-                        household.activeInvite!.expiresAt,
-                      ).toLocaleDateString('vi-VN')}
-                    </p>
-                  </>
-                ) : (
-                  <div className='text-center py-2'>
-                    {isAdmin ? (
-                      <Button
-                        onClick={() => createInviteMutation.mutate()}
-                        disabled={createInviteMutation.isPending}
-                        className='w-full'
-                      >
-                        {createInviteMutation.isPending ? (
-                          <LoadingSpinner
-                            size='sm'
-                            className='mr-1'
-                          />
-                        ) : (
-                          <Link2 className='size-4' />
-                        )}
-                        Tạo link mời
-                      </Button>
-                    ) : (
-                      <p className='text-muted-foreground text-sm'>
-                        Chưa có link mời. Nhờ admin tạo link mới.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Quick stats */}
-          <Card>
-            <CardHeader>
-              <CardTitle className='text-base'>Thông tin</CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-3'>
-              <div className='flex items-center justify-between text-sm'>
-                <span className='text-muted-foreground'>Thành viên</span>
-                <span className='font-medium'>
-                  {household.members.length} người
-                </span>
-              </div>
-              <Separator />
-              <div className='flex items-center justify-between text-sm'>
-                <span className='text-muted-foreground'>Admin</span>
-                <span className='font-medium'>
-                  {household.members.filter((m) => m.role === 'admin').length}{' '}
-                  người
-                </span>
-              </div>
-              <Separator />
-              <div className='flex items-center justify-between text-sm'>
-                <span className='text-muted-foreground'>Ngày tạo</span>
-                <span className='font-medium'>
-                  {new Date(household.createdAt).toLocaleDateString('vi-VN')}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
+          <InviteLinkCard
+            household={household}
+            isAdmin={!!isAdmin}
+            createInviteMutation={createInviteMutation}
+            onError={(msg) => setError(msg)}
+          />
+          <HouseholdInfoCard household={household} />
         </div>
       </div>
 
-      {/* ── Delete confirmation dialog ── */}
-      <Dialog
+      {/* ── Dialogs ── */}
+      <DeleteHouseholdDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
-      >
-        <DialogContent className='sm:max-w-md'>
-          <DialogHeader>
-            <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-destructive/10'>
-              <AlertTriangle className='size-6 text-destructive' />
-            </div>
-            <DialogTitle className='text-center'>Xóa hộ gia đình?</DialogTitle>
-            <DialogDescription className='text-center'>
-              Bạn có chắc chắn muốn xóa{' '}
-              <strong className='text-foreground'>{household.name}</strong>?
-              Hành động này không thể hoàn tác và tất cả dữ liệu sẽ bị mất.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className='mt-2 gap-2 sm:gap-0'>
-            <Button
-              variant='ghost'
-              onClick={() => setDeleteDialogOpen(false)}
-            >
-              Hủy
-            </Button>
-            <Button
-              variant='destructive'
-              onClick={() => deleteMutation.mutate()}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending && (
-                <LoadingSpinner
-                  size='sm'
-                  className='mr-1'
-                />
-              )}
-              Xóa vĩnh viễn
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        householdName={household.name}
+        isPending={deleteMutation.isPending}
+        onConfirm={() =>
+          deleteMutation.mutate(undefined, {
+            onError: (err: any) => {
+              setError(
+                err.response?.data?.message ?? 'Không thể xóa hộ gia đình',
+              );
+              setDeleteDialogOpen(false);
+            },
+          })
+        }
+      />
 
-      {/* ── Kick member confirmation dialog ── */}
-      <Dialog
-        open={!!kickTarget}
-        onOpenChange={(open) => !open && setKickTarget(null)}
-      >
-        <DialogContent className='sm:max-w-md'>
-          <DialogHeader>
-            <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-destructive/10'>
-              <UserMinus className='size-6 text-destructive' />
-            </div>
-            <DialogTitle className='text-center'>Xóa thành viên?</DialogTitle>
-            <DialogDescription className='text-center'>
-              Bạn có chắc chắn muốn xóa{' '}
-              <strong className='text-foreground'>{kickTarget?.name}</strong>{' '}
-              khỏi hộ gia đình?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className='mt-2 gap-2 sm:gap-0'>
-            <Button
-              variant='ghost'
-              onClick={() => setKickTarget(null)}
-            >
-              Hủy
-            </Button>
-            <Button
-              variant='destructive'
-              onClick={() =>
-                kickTarget && removeMemberMutation.mutate(kickTarget.userId)
-              }
-              disabled={removeMemberMutation.isPending}
-            >
-              {removeMemberMutation.isPending && (
-                <LoadingSpinner
-                  size='sm'
-                  className='mr-1'
-                />
-              )}
-              Xóa thành viên
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <KickMemberDialog
+        target={kickTarget}
+        onClose={() => setKickTarget(null)}
+        isPending={removeMemberMutation.isPending}
+        onConfirm={() => {
+          if (kickTarget) {
+            removeMemberMutation.mutate(kickTarget.userId, {
+              onSettled: () => setKickTarget(null),
+              onError: (err: any) => {
+                setError(
+                  err.response?.data?.message ?? 'Không thể xóa thành viên',
+                );
+              },
+            });
+          }
+        }}
+      />
     </div>
+  );
+}
+
+// ─── Member list ─────────────────────────────────────────────────────────────
+
+function MemberList({
+  members,
+  ownerId,
+  currentUserId,
+  isAdmin,
+  removePending,
+  onKick,
+}: {
+  members: HouseholdMember[];
+  ownerId: string;
+  currentUserId: string;
+  isAdmin: boolean;
+  removePending: boolean;
+  onKick: (userId: string, name: string) => void;
+}) {
+  return (
+    <Card className='lg:col-span-2'>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Users className='size-4' />
+          Thành viên
+        </CardTitle>
+        <CardDescription>
+          {members.length} người trong hộ gia đình
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className='divide-y'>
+          {members.map((member) => {
+            const isMemberOwner = member.userId === ownerId;
+            const isMemberAdmin = member.role === 'admin';
+            const canKick =
+              isAdmin && member.userId !== currentUserId && !isMemberOwner;
+
+            return (
+              <div
+                key={member.id}
+                className='flex items-center justify-between py-3 first:pt-0 last:pb-0'
+              >
+                <div className='flex items-center gap-3'>
+                  <Avatar className='size-10'>
+                    <AvatarImage
+                      src={member.user.avatarUrl ?? undefined}
+                      alt={member.user.fullName}
+                    />
+                    <AvatarFallback className='text-sm font-medium'>
+                      {member.user.fullName.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className='min-w-0'>
+                    <p className='flex items-center gap-1.5 text-sm font-medium'>
+                      <span className='truncate'>{member.user.fullName}</span>
+                      {member.userId === currentUserId && (
+                        <span className='text-muted-foreground text-xs font-normal'>
+                          (bạn)
+                        </span>
+                      )}
+                    </p>
+                    <p className='text-muted-foreground truncate text-xs'>
+                      {member.user.email}
+                    </p>
+                  </div>
+                </div>
+
+                <div className='flex shrink-0 items-center gap-2'>
+                  {isMemberOwner && (
+                    <Badge className='gap-1 border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-400'>
+                      <Crown className='size-3' />
+                      Owner
+                    </Badge>
+                  )}
+                  {isMemberAdmin && !isMemberOwner && (
+                    <Badge
+                      variant='secondary'
+                      className='gap-1'
+                    >
+                      <Shield className='size-3' />
+                      Admin
+                    </Badge>
+                  )}
+                  {canKick && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant='ghost'
+                          size='sm'
+                          className='size-8 p-0 text-muted-foreground hover:text-destructive'
+                          onClick={() =>
+                            onKick(member.userId, member.user.fullName)
+                          }
+                          disabled={removePending}
+                        >
+                          <UserMinus className='size-4' />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Xóa {member.user.fullName}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Invite link card ────────────────────────────────────────────────────────
+
+function InviteLinkCard({
+  household,
+  isAdmin,
+  createInviteMutation,
+  onError,
+}: {
+  household: Household;
+  isAdmin: boolean;
+  createInviteMutation: ReturnType<
+    typeof useHouseholdDetail
+  >['createInviteMutation'];
+  onError: (msg: string) => void;
+}) {
+  const { copied, copy } = useCopyToClipboard();
+
+  const inviteLink = household.activeInvite
+    ? `${window.location.origin}/households/join/${household.activeInvite.token}`
+    : '';
+
+  const handleCreateInvite = () => {
+    createInviteMutation.mutate(undefined, {
+      onError: (err: any) => {
+        onError(err.response?.data?.message ?? 'Không thể tạo link mời');
+      },
+    });
+  };
+
+  return (
+    <Card className='overflow-hidden'>
+      <CardHeader className='bg-linear-to-br from-primary/5 to-transparent'>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Link2 className='size-4 text-primary' />
+          Link mời thành viên
+        </CardTitle>
+        <CardDescription>
+          Chia sẻ link này để mời người thân tham gia
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='pt-4'>
+        <div className='flex flex-col gap-4'>
+          {inviteLink ? (
+            <>
+              <div className='w-full break-all rounded-lg border bg-muted/30 px-3 py-3 text-sm font-mono select-all'>
+                {inviteLink}
+              </div>
+              <div className='flex gap-2'>
+                <Button
+                  variant={copied ? 'default' : 'outline'}
+                  className='flex-1'
+                  onClick={() => copy(inviteLink)}
+                >
+                  {copied ? (
+                    <>
+                      <Check className='size-4' />
+                      Đã chép!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className='size-4' />
+                      Sao chép link
+                    </>
+                  )}
+                </Button>
+                {isAdmin && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant='outline'
+                        onClick={handleCreateInvite}
+                        disabled={createInviteMutation.isPending}
+                      >
+                        {createInviteMutation.isPending ? (
+                          <LoadingSpinner size='sm' />
+                        ) : (
+                          <Link2 className='size-4' />
+                        )}
+                        Tạo lại
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Tạo link mới (link cũ sẽ hết hạn)
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              <p className='text-muted-foreground text-xs text-center'>
+                Link có hiệu lực đến{' '}
+                {new Date(household.activeInvite!.expiresAt).toLocaleDateString(
+                  'vi-VN',
+                )}
+              </p>
+            </>
+          ) : (
+            <div className='text-center py-2'>
+              {isAdmin ? (
+                <Button
+                  onClick={handleCreateInvite}
+                  disabled={createInviteMutation.isPending}
+                  className='w-full'
+                >
+                  {createInviteMutation.isPending ? (
+                    <LoadingSpinner
+                      size='sm'
+                      className='mr-1'
+                    />
+                  ) : (
+                    <Link2 className='size-4' />
+                  )}
+                  Tạo link mời
+                </Button>
+              ) : (
+                <p className='text-muted-foreground text-sm'>
+                  Chưa có link mời. Nhờ admin tạo link mới.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Household info card ─────────────────────────────────────────────────────
+
+function HouseholdInfoCard({ household }: { household: Household }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className='text-base'>Thông tin</CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='flex items-center justify-between text-sm'>
+          <span className='text-muted-foreground'>Thành viên</span>
+          <span className='font-medium'>{household.members.length} người</span>
+        </div>
+        <Separator />
+        <div className='flex items-center justify-between text-sm'>
+          <span className='text-muted-foreground'>Admin</span>
+          <span className='font-medium'>
+            {household.members.filter((m) => m.role === 'admin').length} người
+          </span>
+        </div>
+        <Separator />
+        <div className='flex items-center justify-between text-sm'>
+          <span className='text-muted-foreground'>Ngày tạo</span>
+          <span className='font-medium'>
+            {new Date(household.createdAt).toLocaleDateString('vi-VN')}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Delete household dialog ─────────────────────────────────────────────────
+
+function DeleteHouseholdDialog({
+  open,
+  onOpenChange,
+  householdName,
+  isPending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  householdName: string;
+  isPending: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <DialogContent className='sm:max-w-md'>
+        <DialogHeader>
+          <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-destructive/10'>
+            <AlertTriangle className='size-6 text-destructive' />
+          </div>
+          <DialogTitle className='text-center'>Xóa hộ gia đình?</DialogTitle>
+          <DialogDescription className='text-center'>
+            Bạn có chắc chắn muốn xóa{' '}
+            <strong className='text-foreground'>{householdName}</strong>? Hành
+            động này không thể hoàn tác và tất cả dữ liệu sẽ bị mất.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className='mt-2 gap-2 sm:gap-0'>
+          <Button
+            variant='ghost'
+            onClick={() => onOpenChange(false)}
+          >
+            Hủy
+          </Button>
+          <Button
+            variant='destructive'
+            onClick={onConfirm}
+            disabled={isPending}
+          >
+            {isPending && (
+              <LoadingSpinner
+                size='sm'
+                className='mr-1'
+              />
+            )}
+            Xóa vĩnh viễn
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Kick member dialog ──────────────────────────────────────────────────────
+
+function KickMemberDialog({
+  target,
+  onClose,
+  isPending,
+  onConfirm,
+}: {
+  target: { userId: string; name: string } | null;
+  onClose: () => void;
+  isPending: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog
+      open={!!target}
+      onOpenChange={(open) => !open && onClose()}
+    >
+      <DialogContent className='sm:max-w-md'>
+        <DialogHeader>
+          <div className='mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-destructive/10'>
+            <UserMinus className='size-6 text-destructive' />
+          </div>
+          <DialogTitle className='text-center'>Xóa thành viên?</DialogTitle>
+          <DialogDescription className='text-center'>
+            Bạn có chắc chắn muốn xóa{' '}
+            <strong className='text-foreground'>{target?.name}</strong> khỏi hộ
+            gia đình?
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className='mt-2 gap-2 sm:gap-0'>
+          <Button
+            variant='ghost'
+            onClick={onClose}
+          >
+            Hủy
+          </Button>
+          <Button
+            variant='destructive'
+            onClick={onConfirm}
+            disabled={isPending}
+          >
+            {isPending && (
+              <LoadingSpinner
+                size='sm'
+                className='mr-1'
+              />
+            )}
+            Xóa thành viên
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

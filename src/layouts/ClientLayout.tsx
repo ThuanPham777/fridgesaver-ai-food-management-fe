@@ -4,9 +4,7 @@ import { LogOut, User } from 'lucide-react';
 import { ROUTES } from '@/config/constants';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useMutation } from '@tanstack/react-query';
-import { authApi } from '@/api/auth.api';
-import { useNavigate } from 'react-router-dom';
+import { useLogout } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -49,18 +47,11 @@ function UserAvatar({
 
 export function ClientLayout() {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const { user, isAuthenticated, clearAuth } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'login' | 'register'>('login');
 
-  const { mutate: logout, isPending: isLoggingOut } = useMutation({
-    mutationFn: () => authApi.logout(),
-    onSettled: () => {
-      clearAuth();
-      navigate(ROUTES.HOME, { replace: true });
-    },
-  });
+  const { mutate: logout, isPending: isLoggingOut } = useLogout();
 
   const openLogin = () => {
     setModalTab('login');

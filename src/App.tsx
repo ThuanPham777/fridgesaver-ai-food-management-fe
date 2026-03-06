@@ -7,6 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAuthStore } from '@/store/useAuthStore';
 import { env } from '@/config/env';
 import { PageLoader } from '@/components/common/PageLoader';
+import { mapProfileToAuthUser } from '@/utils/auth';
 import type { ApiResponse } from '@/types/api.types';
 import type { AuthResponseDto } from '@/types/auth.types';
 
@@ -47,15 +48,9 @@ function getHydrationPromise(): Promise<void> {
     )
     .then((res) => {
       const { accessToken, user: freshUser } = res.data.data;
-      const authUser = {
-        id: freshUser.id,
-        email: freshUser.email,
-        fullName: freshUser.fullName,
-        role: freshUser.role,
-        avatarUrl: freshUser.avatarUrl ?? undefined,
-        phone: freshUser.phone ?? undefined,
-      };
-      useAuthStore.getState().setAuth(authUser, { accessToken });
+      useAuthStore
+        .getState()
+        .setAuth(mapProfileToAuthUser(freshUser), { accessToken });
     })
     .catch(() => {
       // Cookie expired or revoked — log the user out cleanly

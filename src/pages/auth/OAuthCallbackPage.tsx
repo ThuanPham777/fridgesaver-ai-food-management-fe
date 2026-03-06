@@ -4,7 +4,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { authApi } from '@/api/auth.api';
 import { ROUTES } from '@/config/constants';
 import { PageLoader } from '@/components/common/PageLoader';
-import type { AuthUser } from '@/types/auth.types';
+import { mapProfileToAuthUser } from '@/utils/auth';
 
 /**
  * Handles the redirect from the backend Google OAuth callback.
@@ -35,15 +35,7 @@ export default function OAuthCallbackPage() {
       .me()
       .then(({ data }) => {
         const profile = data.data;
-        const user: AuthUser = {
-          id: profile.id,
-          email: profile.email,
-          fullName: profile.fullName,
-          role: profile.role,
-          avatarUrl: profile.avatarUrl ?? undefined,
-          phone: profile.phone ?? undefined,
-        };
-        setAuth(user, { accessToken });
+        setAuth(mapProfileToAuthUser(profile), { accessToken });
         navigate(ROUTES.HOME, { replace: true });
       })
       .catch(() => {

@@ -1,10 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { authApi } from '@/api/auth.api';
-import { useAuthStore } from '@/store/useAuthStore';
+import { useLogin, useRegister } from '@/hooks/useAuth';
 import { validation } from '@/utils/validation';
 import { env } from '@/config/env';
-import type { AuthUser } from '@/types/auth.types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -101,7 +98,6 @@ function LoginForm({
   onSuccess: () => void;
   onSwitchView: () => void;
 }) {
-  const setAuth = useAuthStore((s) => s.setAuth);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{
@@ -110,29 +106,9 @@ function LoginForm({
     general?: string;
   }>({});
 
-  const { mutate, isPending } = useMutation({
-    mutationFn: () => authApi.login({ email, password }),
-    onSuccess: (res) => {
-      const { data } = res.data;
-      const user: AuthUser = {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: data.user.fullName,
-        role: data.user.role,
-        avatarUrl: data.user.avatarUrl ?? undefined,
-        phone: data.user.phone ?? undefined,
-      };
-      setAuth(user, {
-        accessToken: data.accessToken,
-      });
-      onSuccess();
-    },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { message?: string } } };
-      setErrors({
-        general: e.response?.data?.message ?? 'Email hoặc mật khẩu không đúng',
-      });
-    },
+  const { mutate, isPending } = useLogin({
+    onSuccess: () => onSuccess(),
+    onError: (message) => setErrors({ general: message }),
   });
 
   const handleSubmit = (ev: React.FormEvent) => {
@@ -146,7 +122,7 @@ function LoginForm({
       return;
     }
     setErrors({});
-    mutate();
+    mutate({ email, password });
   };
 
   return (
@@ -254,7 +230,6 @@ function RegisterForm({
   onSuccess: () => void;
   onSwitchView: () => void;
 }) {
-  const setAuth = useAuthStore((s) => s.setAuth);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -265,30 +240,9 @@ function RegisterForm({
     general?: string;
   }>({});
 
-  const { mutate, isPending } = useMutation({
-    mutationFn: () => authApi.register({ fullName, email, password }),
-    onSuccess: (res) => {
-      const { data } = res.data;
-      const user: AuthUser = {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: data.user.fullName,
-        role: data.user.role,
-        avatarUrl: data.user.avatarUrl ?? undefined,
-        phone: data.user.phone ?? undefined,
-      };
-      setAuth(user, {
-        accessToken: data.accessToken,
-      });
-      onSuccess();
-    },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { message?: string } } };
-      setErrors({
-        general:
-          e.response?.data?.message ?? 'Đăng ký thất bại. Vui lòng thử lại.',
-      });
-    },
+  const { mutate, isPending } = useRegister({
+    onSuccess: () => onSuccess(),
+    onError: (message) => setErrors({ general: message }),
   });
 
   const handleSubmit = (ev: React.FormEvent) => {
@@ -305,7 +259,7 @@ function RegisterForm({
       return;
     }
     setErrors({});
-    mutate();
+    mutate({ fullName, email, password });
   };
 
   return (
